@@ -73,10 +73,8 @@ def load_config(path: Path) -> dict[str, Any]:
         if field not in model:
             raise ValueError(f"Missing model.{field}")
     checkpoint = _resolve(model["checkpoint"])
-    if checkpoint.name != "checkpoint_best_total.pth":
-        raise ValueError(
-            "model.checkpoint must point to checkpoint_best_total.pth."
-        )
+    if checkpoint.suffix.lower() != ".pth":
+        raise ValueError("model.checkpoint must point to a .pth checkpoint.")
     if not checkpoint.is_file():
         raise FileNotFoundError(f"RF-DETR checkpoint not found: {checkpoint}")
     model["checkpoint"] = str(checkpoint)

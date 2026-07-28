@@ -11,5 +11,4 @@ tools/
 .codex/
 docs/
 tests/
-third-party/RF-DETR/
-third-party/SAM3/
+third-party/

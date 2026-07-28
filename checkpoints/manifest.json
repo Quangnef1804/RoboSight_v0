@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "deployments": {
+    "Object_1/rfdetr_small": {
+      "dataset": "Object_1",
+      "model": "rfdetr_small",
+      "checkpoint": "checkpoints/object1_rfdetr_small_best.pth",
+      "sha256": "56b6ba03eb44582ad74094d12cf1741153d58c8d52bb448ac4f39bc25a071589",
+      "classes": [
+        "black",
+        "green",
+        "purple",
+        "red",
+        "yellow"
+      ],
+      "source_run": "runs/Object_1/rfdetr_small/train_20260727_150654_c74386",
+      "source_checkpoint": "runs/Object_1/rfdetr_small/train_20260727_150654_c74386/checkpoint_best_total.pth",
+      "checkpoint_source": "ema",
+      "test_metrics": {
+        "overall": {
+          "mAP50": 0.922112226486206,
+          "mAP50_95": 0.7458745241165161,
+          "precision": 0.9428571462631226,
+          "recall": 0.9166666865348816,
+          "F1": 0.9252747297286987,
+          "mAR": 0.846666693687439
+        },
+        "AP_by_class": {
+          "black": 0.6795834898948669,
+          "green": 0.6132425665855408,
+          "purple": 0.9071782231330872,
+          "red": 0.8302145004272461,
+          "yellow": 0.6991537809371948
+        }
+      },
+      "promoted_at": "2026-07-28T17:02:50+07:00"
+    }
+  }
+}

@@ -2,7 +2,7 @@ dataset_config: configs/dataset.yaml
 
 model:
   name: rfdetr_small
-  checkpoint: runs/Object_1/rfdetr_small/train_20260727_150654_c74386/checkpoint_best_total.pth
+  checkpoint: checkpoints/object1_rfdetr_small_best.pth
   device: cuda
   expected_class_count: 5
   optimize: true

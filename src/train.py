@@ -6,6 +6,7 @@ Commands:
     finalize-smoke  Recover smoke post-processing without training again.
     approve-smoke   Record that a human inspected the smoke predictions.
     train           Start a fresh main run and evaluate its best checkpoint once.
+    promote         Promote a completed run's best checkpoint for deployment.
 
 The script intentionally keeps the test split out of training and smoke testing.
 """
@@ -132,6 +133,21 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def deployment_checkpoint_path(config: dict[str, Any]) -> Path:
+    dataset_token = "".join(
+        character.lower()
+        for character in str(config["dataset"]["name"])
+        if character.isalnum()
+    )
+    model_token = "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in str(config["model"]["name"])
+    ).strip("_")
+    if not dataset_token or not model_token:
+        raise ValueError("Dataset and model names must contain letters or numbers.")
+    return REPO_ROOT / "checkpoints" / f"{dataset_token}_{model_token}_best.pth"
 
 
 def verify_dataset_lock(dataset: dict[str, Any]) -> dict[str, Any]:
@@ -1550,6 +1566,113 @@ def run_train(config: dict[str, Any], smoke_run: Path | None) -> Path:
         raise
 
 
+def promote_checkpoint(
+    config: dict[str, Any],
+    run_dir: Path,
+    destination: Path | None = None,
+) -> dict[str, Any]:
+    """Promote a verified completed run without modifying its training artifacts."""
+    run_dir = run_dir.resolve()
+    expected_runs_root = model_runs_root(config).resolve()
+    try:
+        run_dir.relative_to(expected_runs_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Run directory must be under {expected_runs_root}: {run_dir}"
+        ) from exc
+
+    run_manifest_path = run_dir / "run_manifest.json"
+    final_report_path = run_dir / "final_report.json"
+    source_checkpoint = run_dir / "checkpoint_best_total.pth"
+    for required in (run_manifest_path, final_report_path, source_checkpoint):
+        if not required.is_file():
+            raise FileNotFoundError(f"Missing promotion input: {required}")
+
+    run_manifest = read_json(run_manifest_path)
+    final_report = read_json(final_report_path)
+    classes = list(config["dataset"]["classes"])
+    if run_manifest.get("status") != "COMPLETE":
+        raise ValueError("Only a training run with status COMPLETE can be promoted.")
+    if final_report.get("status") != "PASS":
+        raise ValueError("Only a training run whose final report is PASS can be promoted.")
+    if run_manifest.get("dataset_name") != config["dataset"]["name"]:
+        raise ValueError("Run dataset does not match the active dataset config.")
+    if run_manifest.get("model_name") != config["model"]["name"]:
+        raise ValueError("Run model does not match the active training config.")
+    if list(run_manifest.get("classes", [])) != classes:
+        raise ValueError("Run class mapping does not match the active dataset config.")
+
+    audit = checkpoint_audit(source_checkpoint, classes)
+    target = (
+        destination.resolve()
+        if destination is not None
+        else deployment_checkpoint_path(config).resolve()
+    )
+    if target == source_checkpoint:
+        raise ValueError("Deployment checkpoint must differ from the run checkpoint.")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing_sha256 = sha256_file(target) if target.is_file() else None
+    changed = existing_sha256 != audit["sha256"]
+    if changed:
+        temporary_target = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            shutil.copy2(source_checkpoint, temporary_target)
+            copied_sha256 = sha256_file(temporary_target)
+            if copied_sha256 != audit["sha256"]:
+                raise OSError(
+                    "Copied checkpoint checksum mismatch: "
+                    f"expected {audit['sha256']}, got {copied_sha256}"
+                )
+            temporary_target.replace(target)
+        finally:
+            if temporary_target.exists():
+                temporary_target.unlink()
+
+    def repo_relative(path: Path) -> str:
+        try:
+            return path.resolve().relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            return str(path.resolve())
+
+    metrics = final_report.get("test_metrics", {})
+    deployment_key = f"{config['dataset']['name']}/{config['model']['name']}"
+    deployment = {
+        "dataset": config["dataset"]["name"],
+        "model": config["model"]["name"],
+        "checkpoint": repo_relative(target),
+        "sha256": audit["sha256"],
+        "classes": classes,
+        "source_run": repo_relative(run_dir),
+        "source_checkpoint": repo_relative(source_checkpoint),
+        "checkpoint_source": audit.get("best_total_source"),
+        "test_metrics": {
+            "overall": metrics.get("overall", {}),
+            "AP_by_class": metrics.get("AP_by_class", {}),
+        },
+        "promoted_at": now_iso(),
+    }
+    deployment_manifest_path = target.parent / "manifest.json"
+    deployment_manifest = (
+        read_json(deployment_manifest_path)
+        if deployment_manifest_path.is_file()
+        else {"schema_version": 1, "deployments": {}}
+    )
+    deployments = deployment_manifest.setdefault("deployments", {})
+    if not isinstance(deployments, dict):
+        raise ValueError(f"Invalid deployment manifest: {deployment_manifest_path}")
+    deployments[deployment_key] = deployment
+    write_json(deployment_manifest_path, deployment_manifest)
+
+    return {
+        "status": "PROMOTED" if changed else "ALREADY_CURRENT",
+        "checkpoint": str(target),
+        "manifest": str(deployment_manifest_path),
+        "sha256": audit["sha256"],
+        "source_run": str(run_dir),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Reusable RF-DETR COCO smoke/train/evaluation pipeline."
@@ -1584,6 +1707,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Approved smoke run. Defaults to the latest approved smoke run.",
     )
+
+    promote = subparsers.add_parser(
+        "promote", help="Promote a completed PASS run's best checkpoint for deployment."
+    )
+    promote.add_argument("--run-dir", type=Path, required=True)
+    promote.add_argument(
+        "--output",
+        type=Path,
+        help="Optional deployment checkpoint path; defaults to checkpoints/<dataset>_<model>_best.pth.",
+    )
     return parser
 
 
@@ -1617,6 +1750,11 @@ def main() -> int:
     elif args.command == "train":
         smoke_run = args.smoke_run.resolve() if args.smoke_run else None
         run_train(config, smoke_run)
+    elif args.command == "promote":
+        output = args.output.resolve() if args.output else None
+        result = promote_checkpoint(config, args.run_dir.resolve(), output)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print(f"DEPLOYMENT_CHECKPOINT={result['checkpoint']}")
     return 0
 
 

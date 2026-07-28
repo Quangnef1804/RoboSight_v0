@@ -1,12 +1,8 @@
 # RoboSight
 
-Hướng dẫn fine-tune RF-DETR: [docs/RFDETR_TRAINING.md](docs/RFDETR_TRAINING.md).
-
-Đánh giá riêng trên Object_2: [docs/OBJECT2_EXTERNAL_TEST.md](docs/OBJECT2_EXTERNAL_TEST.md).
-
 ```powershell
 # Tải xuống 2 model RF-DETR và SAM 3 vào thư mục third-party/:
-cd third-party/
+cd third-party
 git clone https://github.com/roboflow/rf-detr RF-DETR
 git clone https://github.com/facebookresearch/sam3.git SAM3
 cd ..
@@ -40,4 +36,7 @@ python -m src.check_dataset --dataset data/sam3_trial_v1
 python -m src.realtime --config configs/realtime.yaml
 
 # So sánh 720p/1080p hoặc confidence bằng cách sửa configs/realtime.yaml rồi chạy lại
+
+# Sau khi train PASS, cập nhật checkpoint triển khai cho realtime
+python -m src.train promote --run-dir runs/Object_1/rfdetr_small/<train_run>
 ```
