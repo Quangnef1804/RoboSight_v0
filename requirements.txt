@@ -1,0 +1,16 @@
+# Install the checked-in RF-DETR implementation and its training/logging extras.
+-e ./third-party/RF-DETR[train,loggers]
+-e ./third-party/SAM3
+triton-windows>=3.6,<3.7; sys_platform == "win32"
+triton>=3.6,<3.7; sys_platform != "win32"
+truststore>=0.10,<0.11; sys_platform == "win32"
+
+numpy==1.26.4
+# Reviewer requires the GUI wheel; reinstall this wheel last if a dependency adds headless.
+opencv-python==4.10.0.84
+Pillow==10.4.0
+PyYAML==6.0.2
+tqdm==4.67.1
+pandas==2.2.3
+scikit-learn==1.5.2
+matplotlib==3.9.2

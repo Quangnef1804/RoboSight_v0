@@ -1,0 +1,35 @@
+dataset_config: configs/dataset.yaml
+
+model:
+  name: rfdetr_small
+  checkpoint: runs/Object_1/rfdetr_small/train_20260727_150654_c74386/checkpoint_best_total.pth
+  device: cuda
+  expected_class_count: 5
+  optimize: true
+  compile: false
+  precision: float16
+
+camera:
+  id: 0
+  backend: dshow
+  resolution:
+    width: 1280
+    height: 720
+  target_fps: 30
+  buffer_size: 1
+  reconnect_attempts: 3
+  reconnect_delay_seconds: 0.25
+
+inference:
+  confidence_threshold: 0.50
+
+benchmark:
+  warmup_frames: 20
+  duration_seconds: 60
+  output_root: runs/Object_1/rfdetr_small/realtime
+
+display:
+  enabled: true
+  window_name: RoboSight RF-DETR Realtime
+  max_width: 1280
+  max_height: 720

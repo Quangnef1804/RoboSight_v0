@@ -1,0 +1,15 @@
+name: Object_1
+root: data/Object_1_split
+format: coco
+splits:
+  train: train
+  valid: valid
+  test: test
+annotation_file: _annotations.coco.json
+lock_file: dataset.lock.json
+classes:
+  - black
+  - green
+  - purple
+  - red
+  - yellow

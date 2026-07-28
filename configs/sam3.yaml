@@ -1,0 +1,33 @@
+dataset_config: configs/dataset.yaml
+
+model:
+  source: huggingface
+  repo_id: facebook/sam3
+  checkpoint: null
+  device: cuda
+
+input:
+  images_dir: data/sam3_trial_v1/images
+  extensions:
+    - .jpg
+    - .jpeg
+    - .png
+
+postprocess:
+  mask_threshold: 0.45
+  min_mask_area: 256
+  duplicate_iou_threshold: 0.85
+  valid_region: [0.0, 0.0, 1.0, 1.0]
+  valid_region_min_fraction: 0.90
+
+output:
+  root: outputs/sam3/sam3_trial_v1
+  proposals_dir: proposals
+  previews_dir: previews
+  review_file: review.json
+  labeling_report: labeling_report.csv
+  summary_file: summary.json
+  annotation_file: data/sam3_trial_v1/annotations/_annotations.coco.json
+
+runtime:
+  overwrite: false
