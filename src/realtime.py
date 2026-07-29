@@ -150,14 +150,14 @@ def _warmup(
 ) -> int:
     completed = 0
     dropped = 0
-    failure_limit = max(10, frames * 3)
+    deadline = time.perf_counter() + max(10.0, float(frames))
     print(f"Warming up RF-DETR for {frames} frames...")
     while completed < frames:
-        result = camera.read()
+        result = camera.snapshot()
         dropped += result.dropped_reads
         if result.frame is None:
-            if dropped >= failure_limit:
-                raise ConnectionError("Camera stayed unavailable during warm-up.")
+            if time.perf_counter() >= deadline:
+                raise TimeoutError("Camera produced no usable frames during warm-up.")
             continue
         detector.predict(result.frame)
         completed += 1
@@ -212,7 +212,7 @@ def run(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
         )
 
         while not benchmark.should_stop():
-            camera_result = camera.read()
+            camera_result = camera.snapshot()
             benchmark.record_drop(camera_result.dropped_reads)
             if camera_result.frame is None:
                 continue
@@ -230,7 +230,8 @@ def run(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
             key, display_ms = renderer.show(rendered)
             total_latency_ms = (time.perf_counter() - total_started) * 1000.0
             benchmark.record(
-                read_ms=camera_result.read_ms,
+                frame_copy_ms=camera_result.frame_copy_ms,
+                camera_capture_ms=camera_result.camera_capture_ms,
                 inference_ms=detection.inference_ms,
                 render_ms=render_ms,
                 display_ms=display_ms,

@@ -17,7 +17,8 @@ import numpy as np
 class FrameMetrics:
     frame_index: int
     elapsed_seconds: float
-    read_ms: float
+    frame_copy_ms: float
+    camera_capture_ms: float
     inference_ms: float
     render_ms: float
     display_ms: float
@@ -61,7 +62,8 @@ class Benchmark:
     def record(
         self,
         *,
-        read_ms: float,
+        frame_copy_ms: float,
+        camera_capture_ms: float,
         inference_ms: float,
         render_ms: float,
         display_ms: float,
@@ -77,7 +79,8 @@ class Benchmark:
         frame = FrameMetrics(
             frame_index=len(self.frames) + 1,
             elapsed_seconds=elapsed_seconds,
-            read_ms=float(read_ms),
+            frame_copy_ms=float(frame_copy_ms),
+            camera_capture_ms=float(camera_capture_ms),
             inference_ms=float(inference_ms),
             render_ms=float(render_ms),
             display_ms=float(display_ms),
@@ -145,8 +148,11 @@ class Benchmark:
             "minimum_fps": min(fps_values) if fps_values else None,
             "latency_ms": self._stats(latencies),
             "timing_ms": {
-                "camera_read": self._stats(
-                    [frame.read_ms for frame in self.frames]
+                "frame_copy": self._stats(
+                    [frame.frame_copy_ms for frame in self.frames]
+                ),
+                "camera_capture": self._stats(
+                    [frame.camera_capture_ms for frame in self.frames]
                 ),
                 "inference": self._stats(
                     [frame.inference_ms for frame in self.frames]
