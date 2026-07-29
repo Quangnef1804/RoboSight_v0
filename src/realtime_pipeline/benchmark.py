@@ -16,15 +16,20 @@ import numpy as np
 @dataclass
 class FrameMetrics:
     frame_index: int
+    camera_frame_id: int
     elapsed_seconds: float
+    capture_fps: float
+    processing_fps: float
     frame_copy_ms: float
     camera_capture_ms: float
+    frame_age_ms: float
     inference_ms: float
     render_ms: float
     display_ms: float
-    total_latency_ms: float
-    fps: float
-    detections: int
+    skipped_frames: int
+    raw_detections: int
+    roi_kept_detections: int
+    roi_rejected_detections: int
 
 
 class Benchmark:
@@ -33,11 +38,13 @@ class Benchmark:
         self.started_at = 0.0
         self.finished_at = 0.0
         self.frames: list[FrameMetrics] = []
-        self.dropped_frames = 0
+        self.skipped_frames = 0
+        self.failed_capture_reads = 0
 
     def start(self) -> None:
         self.frames.clear()
-        self.dropped_frames = 0
+        self.skipped_frames = 0
+        self.failed_capture_reads = 0
         self.started_at = time.perf_counter()
         self.finished_at = 0.0
         try:
@@ -56,37 +63,50 @@ class Benchmark:
     def should_stop(self) -> bool:
         return self.elapsed() >= self.duration_seconds
 
-    def record_drop(self, count: int = 1) -> None:
-        self.dropped_frames += max(0, int(count))
+    def record_camera_loss(
+        self, *, skipped_frames: int = 0, failed_reads: int = 0
+    ) -> None:
+        self.skipped_frames += max(0, int(skipped_frames))
+        self.failed_capture_reads += max(0, int(failed_reads))
 
     def record(
         self,
         *,
+        camera_frame_id: int,
+        capture_fps: float,
         frame_copy_ms: float,
         camera_capture_ms: float,
+        frame_age_ms: float,
         inference_ms: float,
         render_ms: float,
         display_ms: float,
-        total_latency_ms: float,
-        detections: int,
+        skipped_frames: int,
+        raw_detections: int,
+        roi_kept_detections: int,
+        roi_rejected_detections: int,
     ) -> FrameMetrics:
         elapsed_seconds = self.elapsed()
         if self.frames:
             frame_interval = elapsed_seconds - self.frames[-1].elapsed_seconds
-            fps = 1.0 / frame_interval if frame_interval > 0 else 0.0
+            processing_fps = 1.0 / frame_interval if frame_interval > 0 else 0.0
         else:
-            fps = 0.0
+            processing_fps = 0.0
         frame = FrameMetrics(
             frame_index=len(self.frames) + 1,
+            camera_frame_id=int(camera_frame_id),
             elapsed_seconds=elapsed_seconds,
+            capture_fps=float(capture_fps),
+            processing_fps=processing_fps,
             frame_copy_ms=float(frame_copy_ms),
             camera_capture_ms=float(camera_capture_ms),
+            frame_age_ms=float(frame_age_ms),
             inference_ms=float(inference_ms),
             render_ms=float(render_ms),
             display_ms=float(display_ms),
-            total_latency_ms=float(total_latency_ms),
-            fps=fps,
-            detections=int(detections),
+            skipped_frames=max(0, int(skipped_frames)),
+            raw_detections=max(0, int(raw_detections)),
+            roi_kept_detections=max(0, int(roi_kept_detections)),
+            roi_rejected_detections=max(0, int(roi_rejected_detections)),
         )
         self.frames.append(frame)
         return frame
@@ -95,9 +115,11 @@ class Benchmark:
         if not self.frames:
             return 0.0, 0.0
         recent = self.frames[-30:]
-        fps_values = [frame.fps for frame in recent if frame.fps > 0]
+        fps_values = [
+            frame.processing_fps for frame in recent if frame.processing_fps > 0
+        ]
         fps = statistics.fmean(fps_values) if fps_values else 0.0
-        return fps, self.frames[-1].total_latency_ms
+        return fps, self.frames[-1].frame_age_ms
 
     @staticmethod
     def _stats(values: list[float]) -> dict[str, float | None]:
@@ -133,20 +155,35 @@ class Benchmark:
         *,
         stop_reason: str,
         metadata: dict[str, Any],
+        capture_fps: float,
     ) -> dict[str, Any]:
         self.finished_at = self.finished_at or time.perf_counter()
         runtime = max(0.0, self.finished_at - self.started_at)
-        latencies = [frame.total_latency_ms for frame in self.frames]
-        fps_values = [frame.fps for frame in self.frames if frame.fps > 0]
+        frame_ages = [frame.frame_age_ms for frame in self.frames]
+        fps_values = [
+            frame.processing_fps
+            for frame in self.frames
+            if frame.processing_fps > 0
+        ]
+        processing_fps = len(self.frames) / runtime if runtime > 0 else 0.0
         return {
             "status": "PASS" if self.frames else "FAIL",
             "stop_reason": stop_reason,
             "runtime_seconds": runtime,
             "processed_frames": len(self.frames),
-            "dropped_frames": self.dropped_frames,
-            "average_fps": len(self.frames) / runtime if runtime > 0 else 0.0,
-            "minimum_fps": min(fps_values) if fps_values else None,
-            "latency_ms": self._stats(latencies),
+            "capture_fps": float(capture_fps),
+            "processing_fps": processing_fps,
+            "minimum_processing_fps": min(fps_values) if fps_values else None,
+            "frame_age_ms": self._stats(frame_ages),
+            "skipped_frames": self.skipped_frames,
+            "failed_capture_reads": self.failed_capture_reads,
+            "raw_detections": sum(frame.raw_detections for frame in self.frames),
+            "roi_kept_detections": sum(
+                frame.roi_kept_detections for frame in self.frames
+            ),
+            "roi_rejected_detections": sum(
+                frame.roi_rejected_detections for frame in self.frames
+            ),
             "timing_ms": {
                 "frame_copy": self._stats(
                     [frame.frame_copy_ms for frame in self.frames]
@@ -174,6 +211,7 @@ class Benchmark:
         *,
         stop_reason: str,
         metadata: dict[str, Any],
+        capture_fps: float,
     ) -> dict[str, Any]:
         run_dir.mkdir(parents=True, exist_ok=False)
         metrics_path = run_dir / "metrics.csv"
@@ -185,7 +223,11 @@ class Benchmark:
             writer.writeheader()
             for frame in self.frames:
                 writer.writerow(asdict(frame))
-        summary = self.summary(stop_reason=stop_reason, metadata=metadata)
+        summary = self.summary(
+            stop_reason=stop_reason,
+            metadata=metadata,
+            capture_fps=capture_fps,
+        )
         (run_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",

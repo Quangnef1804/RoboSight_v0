@@ -67,9 +67,10 @@ class Renderer:
         frame: np.ndarray[Any, Any],
         predictions: list[dict[str, Any]],
         *,
-        fps: float,
+        capture_fps: float,
+        processing_fps: float,
         inference_ms: float,
-        latency_ms: float,
+        frame_age_ms: float,
     ) -> tuple[np.ndarray[Any, Any], float]:
         started = time.perf_counter()
         rendered = frame.copy()
@@ -117,8 +118,9 @@ class Renderer:
                 cv2.LINE_AA,
             )
         status = (
-            f"FPS {fps:5.1f} | inference {inference_ms:6.1f} ms | "
-            f"latency {latency_ms:6.1f} ms | objects {len(predictions)}"
+            f"CAP {capture_fps:4.1f} | PROC {processing_fps:4.1f} FPS | "
+            f"inference {inference_ms:6.1f} ms | "
+            f"frame age {frame_age_ms:6.1f} ms | objects {len(predictions)}"
         )
         cv2.rectangle(rendered, (0, 0), (rendered.shape[1], 42), (20, 20, 20), -1)
         cv2.putText(

@@ -21,6 +21,9 @@ from ..train import (
 class DetectionResult:
     predictions: list[dict[str, Any]]
     inference_ms: float
+    raw_detections: int
+    roi_kept_detections: int
+    roi_rejected_detections: int
 
 
 class Detector:
@@ -103,7 +106,7 @@ class Detector:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         inference_ms = (time.perf_counter() - started) * 1000.0
-        predictions = [
+        raw_predictions = [
             prediction
             for prediction in detections_to_predictions(detections, self.classes)
             if float(prediction["score"]) >= self.threshold
@@ -116,7 +119,7 @@ class Detector:
         bottom = (roi_y + roi_height) * height
         predictions = [
             prediction
-            for prediction in predictions
+            for prediction in raw_predictions
             if left
             <= (float(prediction["xyxy"][0]) + float(prediction["xyxy"][2])) / 2.0
             <= right
@@ -124,7 +127,13 @@ class Detector:
             <= (float(prediction["xyxy"][1]) + float(prediction["xyxy"][3])) / 2.0
             <= bottom
         ]
-        return DetectionResult(predictions, inference_ms)
+        return DetectionResult(
+            predictions=predictions,
+            inference_ms=inference_ms,
+            raw_detections=len(raw_predictions),
+            roi_kept_detections=len(predictions),
+            roi_rejected_detections=len(raw_predictions) - len(predictions),
+        )
 
     def release(self) -> None:
         self.model = None

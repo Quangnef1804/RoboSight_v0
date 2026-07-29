@@ -17,7 +17,9 @@ class CameraSnapshot:
     frame: np.ndarray[Any, Any] | None
     frame_copy_ms: float
     camera_capture_ms: float
-    dropped_reads: int
+    capture_fps: float
+    skipped_frames: int
+    failed_reads: int
     frame_id: int = 0
     captured_at: float = 0.0
 
@@ -48,21 +50,57 @@ class Camera:
         self._latest_frame_id = 0
         self._delivered_frame_id = 0
         self._latest_capture_ms = 0.0
+        self._latest_capture_fps = 0.0
         self._latest_captured_at = 0.0
+        self._captured_frames = 0
         self._failed_reads = 0
         self._reported_failed_reads = 0
         self._error: Exception | None = None
         self._properties: dict[str, Any] = {"opened": False}
+        self._setting_results: dict[str, bool] = {}
 
     def _new_capture(self) -> cv2.VideoCapture:
         capture = cv2.VideoCapture(self.camera_id, self.backend)
         resolution = self.config["resolution"]
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(resolution["width"]))
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(resolution["height"]))
-        capture.set(cv2.CAP_PROP_FPS, float(self.config.get("target_fps", 30)))
-        capture.set(
-            cv2.CAP_PROP_BUFFERSIZE, int(self.config.get("buffer_size", 1))
-        )
+        codec = str(self.config.get("codec", "MJPG")).upper()
+        setting_results = {
+            "codec": bool(
+                capture.set(
+                    cv2.CAP_PROP_FOURCC,
+                    cv2.VideoWriter_fourcc(*codec),
+                )
+            ),
+            "width": bool(
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(resolution["width"]))
+            ),
+            "height": bool(
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(resolution["height"]))
+            ),
+            "fps": bool(
+                capture.set(
+                    cv2.CAP_PROP_FPS,
+                    float(self.config.get("target_fps", 30)),
+                )
+            ),
+            "buffer_size": bool(
+                capture.set(
+                    cv2.CAP_PROP_BUFFERSIZE,
+                    int(self.config.get("buffer_size", 1)),
+                )
+            ),
+        }
+        if "auto_exposure" in self.config:
+            setting_results["auto_exposure"] = bool(
+                capture.set(
+                    cv2.CAP_PROP_AUTO_EXPOSURE,
+                    float(self.config["auto_exposure"]),
+                )
+            )
+        if "exposure" in self.config:
+            setting_results["exposure"] = bool(
+                capture.set(cv2.CAP_PROP_EXPOSURE, float(self.config["exposure"]))
+            )
+        self._setting_results = setting_results
         return capture
 
     def open(self) -> None:
@@ -81,7 +119,9 @@ class Camera:
             self._latest_frame_id = 0
             self._delivered_frame_id = 0
             self._latest_capture_ms = 0.0
+            self._latest_capture_fps = 0.0
             self._latest_captured_at = 0.0
+            self._captured_frames = 0
             self._failed_reads = 0
             self._reported_failed_reads = 0
             self._error = None
@@ -96,6 +136,10 @@ class Camera:
     def _capture_properties(
         self, capture: cv2.VideoCapture
     ) -> dict[str, Any]:
+        fourcc_value = int(capture.get(cv2.CAP_PROP_FOURCC))
+        fourcc = "".join(
+            chr((fourcc_value >> (8 * index)) & 0xFF) for index in range(4)
+        ).strip("\x00")
         return {
             "opened": bool(capture.isOpened()),
             "id": self.camera_id,
@@ -103,6 +147,11 @@ class Camera:
             "width": int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
             "height": int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
             "fps": float(capture.get(cv2.CAP_PROP_FPS)),
+            "requested_codec": str(self.config.get("codec", "MJPG")).upper(),
+            "actual_codec": fourcc,
+            "auto_exposure": float(capture.get(cv2.CAP_PROP_AUTO_EXPOSURE)),
+            "exposure": float(capture.get(cv2.CAP_PROP_EXPOSURE)),
+            "set_return_values": dict(self._setting_results),
             "mode": "async_latest_frame",
         }
 
@@ -138,15 +187,23 @@ class Camera:
                     return
                 continue
 
-            captured_at = time.perf_counter()
+            capture_started_at = time.perf_counter()
             ok, frame = capture.read()
-            capture_ms = (time.perf_counter() - captured_at) * 1000.0
+            captured_at = time.perf_counter()
+            capture_ms = (captured_at - capture_started_at) * 1000.0
             if ok and frame is not None and frame.size:
                 with self._lock:
+                    previous_captured_at = self._latest_captured_at
                     self._latest_frame = frame
                     self._latest_frame_id += 1
                     self._latest_capture_ms = capture_ms
+                    if previous_captured_at > 0:
+                        interval = captured_at - previous_captured_at
+                        self._latest_capture_fps = (
+                            1.0 / interval if interval > 0 else 0.0
+                        )
                     self._latest_captured_at = captured_at
+                    self._captured_frames += 1
                 continue
 
             with self._lock:
@@ -176,7 +233,9 @@ class Camera:
                     frame=None,
                     frame_copy_ms=(time.perf_counter() - started) * 1000.0,
                     camera_capture_ms=0.0,
-                    dropped_reads=failed,
+                    capture_fps=0.0,
+                    skipped_frames=0,
+                    failed_reads=failed,
                 )
 
             skipped = max(
@@ -187,14 +246,25 @@ class Camera:
             frame_id = self._latest_frame_id
             captured_at = self._latest_captured_at
             camera_capture_ms = self._latest_capture_ms
+            capture_fps = self._latest_capture_fps
         return CameraSnapshot(
             frame=frame,
             frame_copy_ms=(time.perf_counter() - started) * 1000.0,
             camera_capture_ms=camera_capture_ms,
-            dropped_reads=failed + skipped,
+            capture_fps=capture_fps,
+            skipped_frames=skipped,
+            failed_reads=failed,
             frame_id=frame_id,
             captured_at=captured_at,
         )
+
+    def counters(self) -> dict[str, float | int]:
+        with self._lock:
+            return {
+                "captured_frames": self._captured_frames,
+                "failed_reads": self._failed_reads,
+                "timestamp": time.perf_counter(),
+            }
 
     def properties(self) -> dict[str, Any]:
         with self._lock:

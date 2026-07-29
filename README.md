@@ -35,6 +35,9 @@ python -m src.check_dataset --dataset data/sam3_trial_v1
 # Chạy RF-DETR realtime; nhấn Q để dừng và lưu benchmark
 python -m src.realtime --config configs/realtime.yaml
 
+# Benchmark riêng tốc độ camera, không load RF-DETR
+python -m src.realtime --config configs/realtime.yaml --camera-only
+
 # So sánh 720p/1080p hoặc confidence bằng cách sửa configs/realtime.yaml rồi chạy lại
 
 # Sau khi train PASS, cập nhật checkpoint triển khai cho realtime

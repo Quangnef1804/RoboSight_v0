@@ -12,6 +12,7 @@ model:
 camera:
   id: 0
   backend: dshow
+  codec: MJPG
   resolution:
     width: 1280
     height: 720
