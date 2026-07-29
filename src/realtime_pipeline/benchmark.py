@@ -68,10 +68,15 @@ class Benchmark:
         total_latency_ms: float,
         detections: int,
     ) -> FrameMetrics:
-        fps = 1000.0 / total_latency_ms if total_latency_ms > 0 else 0.0
+        elapsed_seconds = self.elapsed()
+        if self.frames:
+            frame_interval = elapsed_seconds - self.frames[-1].elapsed_seconds
+            fps = 1.0 / frame_interval if frame_interval > 0 else 0.0
+        else:
+            fps = 0.0
         frame = FrameMetrics(
             frame_index=len(self.frames) + 1,
-            elapsed_seconds=self.elapsed(),
+            elapsed_seconds=elapsed_seconds,
             read_ms=float(read_ms),
             inference_ms=float(inference_ms),
             render_ms=float(render_ms),
@@ -87,10 +92,8 @@ class Benchmark:
         if not self.frames:
             return 0.0, 0.0
         recent = self.frames[-30:]
-        average_latency = statistics.fmean(
-            frame.total_latency_ms for frame in recent
-        )
-        fps = 1000.0 / average_latency if average_latency > 0 else 0.0
+        fps_values = [frame.fps for frame in recent if frame.fps > 0]
+        fps = statistics.fmean(fps_values) if fps_values else 0.0
         return fps, self.frames[-1].total_latency_ms
 
     @staticmethod
@@ -131,7 +134,7 @@ class Benchmark:
         self.finished_at = self.finished_at or time.perf_counter()
         runtime = max(0.0, self.finished_at - self.started_at)
         latencies = [frame.total_latency_ms for frame in self.frames]
-        fps_values = [frame.fps for frame in self.frames]
+        fps_values = [frame.fps for frame in self.frames if frame.fps > 0]
         return {
             "status": "PASS" if self.frames else "FAIL",
             "stop_reason": stop_reason,

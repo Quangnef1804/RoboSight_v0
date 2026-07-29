@@ -21,7 +21,8 @@ camera:
   reconnect_delay_seconds: 0.25
 
 inference:
-  confidence_threshold: 0.50
+  confidence_threshold: 0.65
+  roi: [0.10, 0.10, 0.80, 0.80]
 
 benchmark:
   warmup_frames: 20

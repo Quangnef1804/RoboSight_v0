@@ -105,6 +105,22 @@ def load_config(path: Path) -> dict[str, Any]:
     )
     if not 0 <= threshold <= 1:
         raise ValueError("inference.confidence_threshold must be between 0 and 1.")
+    config["inference"]["confidence_threshold"] = threshold
+    roi = config["inference"].get("roi", [0.0, 0.0, 1.0, 1.0])
+    if not isinstance(roi, list) or len(roi) != 4:
+        raise ValueError("inference.roi must contain [x, y, width, height].")
+    roi = [float(value) for value in roi]
+    roi_x, roi_y, roi_width, roi_height = roi
+    if (
+        roi_width <= 0
+        or roi_height <= 0
+        or roi_x < 0
+        or roi_y < 0
+        or roi_x + roi_width > 1
+        or roi_y + roi_height > 1
+    ):
+        raise ValueError("inference.roi must be a normalized rectangle inside the frame.")
+    config["inference"]["roi"] = roi
 
     benchmark = config["benchmark"]
     warmup_frames = int(benchmark.get("warmup_frames", 0))
@@ -156,8 +172,13 @@ def run(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
         config["model"],
         list(config["dataset"]["classes"]),
         float(config["inference"]["confidence_threshold"]),
+        list(config["inference"]["roi"]),
     )
-    renderer = Renderer(config["display"], list(config["dataset"]["classes"]))
+    renderer = Renderer(
+        config["display"],
+        list(config["dataset"]["classes"]),
+        list(config["inference"]["roi"]),
+    )
     benchmark = Benchmark(float(config["benchmark"]["duration_seconds"]))
     run_dir = _run_dir(config)
     checkpoint_audit: dict[str, Any] = {}
@@ -191,11 +212,11 @@ def run(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
         )
 
         while not benchmark.should_stop():
-            total_started = time.perf_counter()
             camera_result = camera.read()
             benchmark.record_drop(camera_result.dropped_reads)
             if camera_result.frame is None:
                 continue
+            total_started = camera_result.captured_at or time.perf_counter()
 
             detection = detector.predict(camera_result.frame)
             fps, previous_latency = benchmark.overlay_metrics()
@@ -250,8 +271,10 @@ def run(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
             "confidence_threshold": float(
                 config["inference"]["confidence_threshold"]
             ),
+            "roi": list(config["inference"]["roi"]),
             "device": str(config["model"]["device"]),
             "precision": str(config["model"].get("precision", "float16")),
+            "camera_pipeline": "async_latest_frame",
         },
         "config": config,
         "classes": list(config["dataset"]["classes"]),

@@ -29,10 +29,12 @@ class Detector:
         model_config: dict[str, Any],
         classes: list[str],
         confidence_threshold: float,
+        roi: list[float] | None = None,
     ) -> None:
         self.config = model_config
         self.classes = classes
         self.threshold = float(confidence_threshold)
+        self.roi = list(roi or [0.0, 0.0, 1.0, 1.0])
         self.model: Any = None
         self.audit: dict[str, Any] = {}
 
@@ -105,6 +107,22 @@ class Detector:
             prediction
             for prediction in detections_to_predictions(detections, self.classes)
             if float(prediction["score"]) >= self.threshold
+        ]
+        height, width = frame_bgr.shape[:2]
+        roi_x, roi_y, roi_width, roi_height = self.roi
+        left = roi_x * width
+        top = roi_y * height
+        right = (roi_x + roi_width) * width
+        bottom = (roi_y + roi_height) * height
+        predictions = [
+            prediction
+            for prediction in predictions
+            if left
+            <= (float(prediction["xyxy"][0]) + float(prediction["xyxy"][2])) / 2.0
+            <= right
+            and top
+            <= (float(prediction["xyxy"][1]) + float(prediction["xyxy"][3])) / 2.0
+            <= bottom
         ]
         return DetectionResult(predictions, inference_ms)
 

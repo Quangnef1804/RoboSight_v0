@@ -35,7 +35,10 @@ def class_colors(classes: list[str]) -> dict[str, tuple[int, int, int]]:
 
 class Renderer:
     def __init__(
-        self, config: dict[str, Any], classes: list[str]
+        self,
+        config: dict[str, Any],
+        classes: list[str],
+        roi: list[float] | None = None,
     ) -> None:
         self.config = config
         self.enabled = bool(config.get("enabled", True))
@@ -43,6 +46,7 @@ class Renderer:
             config.get("window_name", "RoboSight RF-DETR Realtime")
         )
         self.colors = class_colors(classes)
+        self.roi = list(roi or [0.0, 0.0, 1.0, 1.0])
         self.window_open = False
         if self.enabled:
             gui_line = next(
@@ -69,6 +73,19 @@ class Renderer:
     ) -> tuple[np.ndarray[Any, Any], float]:
         started = time.perf_counter()
         rendered = frame.copy()
+        height, width = rendered.shape[:2]
+        roi_x, roi_y, roi_width, roi_height = self.roi
+        roi_left = round(roi_x * width)
+        roi_top = round(roi_y * height)
+        roi_right = round((roi_x + roi_width) * width)
+        roi_bottom = round((roi_y + roi_height) * height)
+        cv2.rectangle(
+            rendered,
+            (roi_left, roi_top),
+            (roi_right, roi_bottom),
+            (0, 255, 0),
+            2,
+        )
         for prediction in predictions:
             x1, y1, x2, y2 = (
                 round(float(value)) for value in prediction["xyxy"]
